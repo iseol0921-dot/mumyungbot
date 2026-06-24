@@ -15,8 +15,6 @@ import {
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
-  VoiceConnectionStatus,
-  entersState,
   NoSubscriberBehavior,
   StreamType
 } from '@discordjs/voice';
@@ -24,16 +22,16 @@ import {
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-
 import { spawn } from 'child_process';
 import ffmpegPath from 'ffmpeg-static';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SERVER_IDS = ['1506990201204117565'];
 const DATA_FILE = './voiceData.json';
 
-const KAKUM_ALERT_MS = 5 * 1000; // 테스트용 5초. 성공하면 80 * 1000 으로 바꾸기
+const KAKUM_ALERT_MS = 5 * 1000; // 테스트용 5초. 성공하면 80 * 1000 으로 바꿔
 
 const kakumTimers = new Map();
 
@@ -100,7 +98,7 @@ function makeKakumEmbed(status, detail) {
     .setDescription(
       `상태: **${status}**\n\n${detail}\n\n` +
       `첫 유혹 맞고 나서 **시작/리셋** 누르기\n` +
-      `효과음 테스트는 현재 5초 뒤 울림`
+      `현재 테스트라서 5초 뒤 효과음 울림`
     )
     .setColor(0x9b59b6);
 }
@@ -112,6 +110,7 @@ function makeKakumButtons() {
       .setLabel('시작/리셋')
       .setEmoji('▶️')
       .setStyle(ButtonStyle.Success),
+
     new ButtonBuilder()
       .setCustomId('kakum_stop')
       .setLabel('종료')
@@ -144,8 +143,15 @@ async function playAlarm(connection) {
   }
 
   try {
-    await entersState(connection, VoiceConnectionStatus.Ready, 10000);
-    console.log('음성 연결 준비 완료');
+    const ffmpeg = spawn(ffmpegPath, [
+      '-i', alarmPath,
+      '-analyzeduration', '0',
+      '-loglevel', '0',
+      '-f', 's16le',
+      '-ar', '48000',
+      '-ac', '2',
+      'pipe:1'
+    ]);
 
     const player = createAudioPlayer({
       behaviors: {
@@ -153,11 +159,12 @@ async function playAlarm(connection) {
       }
     });
 
-    const resource = createAudioResource(alarmPath, {
+    const resource = createAudioResource(ffmpeg.stdout, {
+      inputType: StreamType.Raw,
       inlineVolume: true
     });
 
-    resource.volume?.setVolume(1.5);
+    resource.volume?.setVolume(2);
 
     connection.subscribe(player);
     player.play(resource);
@@ -173,8 +180,13 @@ async function playAlarm(connection) {
     player.on('error', error => {
       console.error('효과음 재생 오류:', error);
     });
+
+    ffmpeg.on('error', error => {
+      console.error('ffmpeg 실행 오류:', error);
+    });
+
   } catch (error) {
-    console.error('음성 연결/재생 실패:', error);
+    console.error('음성 재생 실패:', error);
   }
 }
 
@@ -278,7 +290,8 @@ client.on('interactionCreate', async interaction => {
           channelId: voiceChannel.id,
           guildId: interaction.guild.id,
           adapterCreator: interaction.guild.voiceAdapterCreator,
-          selfDeaf: false
+          selfDeaf: false,
+          selfMute: false
         });
 
         const alertTimeout = setTimeout(async () => {
@@ -289,7 +302,7 @@ client.on('interactionCreate', async interaction => {
               embeds: [
                 makeKakumEmbed(
                   '🔔 알림 울림',
-                  '단체유혹 10초 전 알림이야! 유혹 맞고 나면 다시 시작/리셋 눌러줘.'
+                  '단체유혹 알림이야! 유혹 맞고 나면 다시 시작/리셋 눌러줘.'
                 )
               ],
               components: [makeKakumButtons()]
@@ -465,6 +478,10 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply('오류가 발생했어. Railway 로그 확인 필요!');
       }
     } catch {}
+  }
+});
+
+client.login(process.env.DISCORD_TOKEN);
   }
 });
 
