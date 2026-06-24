@@ -458,4 +458,11 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+const token = process.env.DISCORD_TOKEN?.trim();
+
+if (!token) {
+  console.error('DISCORD_TOKEN이 없습니다. .env 파일을 확인하세요.');
+  process.exit(1);
+}
+
+client.login(token);
