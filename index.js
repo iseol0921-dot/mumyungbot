@@ -133,8 +133,9 @@ function clearKakumTimer(guildId) {
   kakumTimers.delete(guildId);
 }
 
-function playAlarm(connection) {
-console.log('카쿰 알람 재생 시도!');
+async function playAlarm(connection) {
+  console.log('카쿰 알람 재생 시도!');
+
   const alarmPath = path.join(__dirname, 'sounds', 'alarm.mp3');
 
   if (!fs.existsSync(alarmPath)) {
@@ -142,16 +143,38 @@ console.log('카쿰 알람 재생 시도!');
     return;
   }
 
-  const player = createAudioPlayer();
-  const resource = createAudioResource(alarmPath);
+  try {
+    await entersState(connection, VoiceConnectionStatus.Ready, 10000);
 
-  connection.subscribe(player);
-  player.play(resource);
+    console.log('음성 연결 준비 완료');
 
-  player.on('error', error => {
-    console.error('효과음 재생 오류:', error);
-  });
-}
+    const player = createAudioPlayer({
+      behaviors: {
+        noSubscriber: NoSubscriberBehavior.Play
+      }
+    });
+
+    const resource = createAudioResource(alarmPath);
+
+    connection.subscribe(player);
+    player.play(resource);
+
+    player.on(AudioPlayerStatus.Playing, () => {
+      console.log('효과음 재생중!');
+    });
+
+    player.on(AudioPlayerStatus.Idle, () => {
+      console.log('효과음 재생 끝!');
+    });
+
+    player.on('error', error => {
+      console.error('효과음 재생 오류:', error);
+    });
+
+  } catch (error) {
+    console.error('음성 연결 실패:', error);
+  }
+
 
 const commands = [
   new SlashCommandBuilder()
