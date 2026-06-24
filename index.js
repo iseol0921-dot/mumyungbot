@@ -15,8 +15,6 @@ import {
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
-  VoiceConnectionStatus,
-  entersState,
   NoSubscriberBehavior,
   StreamType
 } from '@discordjs/voice';
@@ -33,8 +31,7 @@ const __dirname = path.dirname(__filename);
 const SERVER_IDS = ['1506990201204117565'];
 const DATA_FILE = './voiceData.json';
 
-// 테스트용 5초. 성공하면 80 * 1000 으로 변경
-const KAKUM_ALERT_MS = 5 * 1000;
+const KAKUM_ALERT_MS = 5 * 1000; // 테스트용. 성공하면 80 * 1000 으로 바꾸기
 
 const kakumTimers = new Map();
 
@@ -128,13 +125,13 @@ function clearKakumTimer(guildId) {
   if (old.alertTimeout) clearTimeout(old.alertTimeout);
 
   try {
-    if (old.connection) old.connection.destroy();
+    old.connection?.destroy();
   } catch {}
 
   kakumTimers.delete(guildId);
 }
 
-async function playAlarm(connection) {
+function playAlarm(connection) {
   console.log('카쿰 알람 재생 시도!');
 
   const alarmPath = path.join(__dirname, 'sounds', 'alarm.mp3');
@@ -144,55 +141,47 @@ async function playAlarm(connection) {
     return;
   }
 
-  try {
-    await entersState(connection, VoiceConnectionStatus.Ready, 30000);
-    console.log('디스코드 음성 연결 READY');
+  const ffmpeg = spawn(ffmpegPath, [
+    '-i', alarmPath,
+    '-analyzeduration', '0',
+    '-loglevel', '0',
+    '-f', 's16le',
+    '-ar', '48000',
+    '-ac', '2',
+    'pipe:1'
+  ]);
 
-    const ffmpeg = spawn(ffmpegPath, [
-      '-i', alarmPath,
-      '-analyzeduration', '0',
-      '-loglevel', '0',
-      '-f', 's16le',
-      '-ar', '48000',
-      '-ac', '2',
-      'pipe:1'
-    ]);
+  const player = createAudioPlayer({
+    behaviors: {
+      noSubscriber: NoSubscriberBehavior.Play
+    }
+  });
 
-    const player = createAudioPlayer({
-      behaviors: {
-        noSubscriber: NoSubscriberBehavior.Play
-      }
-    });
+  const resource = createAudioResource(ffmpeg.stdout, {
+    inputType: StreamType.Raw,
+    inlineVolume: true
+  });
 
-    const resource = createAudioResource(ffmpeg.stdout, {
-      inputType: StreamType.Raw,
-      inlineVolume: true
-    });
+  resource.volume?.setVolume(10);
 
-    resource.volume?.setVolume(5);
+  connection.subscribe(player);
+  player.play(resource);
 
-    connection.subscribe(player);
-    player.play(resource);
+  player.on(AudioPlayerStatus.Playing, () => {
+    console.log('효과음 재생중!');
+  });
 
-    player.on(AudioPlayerStatus.Playing, () => {
-      console.log('효과음 재생중!');
-    });
+  player.on(AudioPlayerStatus.Idle, () => {
+    console.log('효과음 재생 끝!');
+  });
 
-    player.on(AudioPlayerStatus.Idle, () => {
-      console.log('효과음 재생 끝!');
-    });
+  player.on('error', error => {
+    console.error('효과음 재생 오류:', error);
+  });
 
-    player.on('error', error => {
-      console.error('효과음 재생 오류:', error);
-    });
-
-    ffmpeg.on('error', error => {
-      console.error('ffmpeg 오류:', error);
-    });
-
-  } catch (error) {
-    console.error('음성 연결 READY 실패. Railway에서 Discord 음성 UDP가 막혔을 가능성 큼:', error);
-  }
+  ffmpeg.on('error', error => {
+    console.error('ffmpeg 오류:', error);
+  });
 }
 
 const commands = [
@@ -299,26 +288,18 @@ client.on('interactionCreate', async interaction => {
           selfMute: false
         });
 
-        connection.on(VoiceConnectionStatus.Ready, () => {
-          console.log('봇 음성채널 READY 됨');
-        });
-
         const alertTimeout = setTimeout(async () => {
-          await playAlarm(connection);
+          playAlarm(connection);
 
-          try {
-            await interaction.message.edit({
-              embeds: [
-                makeKakumEmbed(
-                  '🔔 알림 울림',
-                  '단체유혹 알림이야! 유혹 맞고 나면 다시 시작/리셋 눌러줘.'
-                )
-              ],
-              components: [makeKakumButtons()]
-            });
-          } catch (e) {
-            console.error('카쿰 메시지 수정 오류:', e);
-          }
+          await interaction.message.edit({
+            embeds: [
+              makeKakumEmbed(
+                '🔔 알림 울림',
+                '단체유혹 알림이야! 유혹 맞고 나면 다시 시작/리셋 눌러줘.'
+              )
+            ],
+            components: [makeKakumButtons()]
+          });
         }, KAKUM_ALERT_MS);
 
         kakumTimers.set(guildId, {
@@ -344,10 +325,7 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.update({
           embeds: [
-            makeKakumEmbed(
-              '대기중',
-              '타이머 정지됨.'
-            )
+            makeKakumEmbed('대기중', '타이머 정지됨.')
           ],
           components: [makeKakumButtons()]
         });
@@ -414,6 +392,7 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === '미접속일자') {
       const days = 7;
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+
       let guild = interaction.guild || client.guilds.cache.get(guildId);
 
       if (!guild) {
