@@ -20,18 +20,14 @@ import {
 } from '@discordjs/voice';
 
 import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
-import ffmpegPath from 'ffmpeg-static';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { Readable } from 'stream';
 
 const SERVER_IDS = ['1506990201204117565'];
 const DATA_FILE = './voiceData.json';
 
-const KAKUM_ALERT_MS = 5 * 1000; // 테스트용 5초. 성공하면 80 * 1000 으로 바꿔
+// 테스트용: 5초 뒤 알림
+// 성공하면 80 * 1000 으로 바꾸면 됨
+const KAKUM_ALERT_MS = 5 * 1000;
 
 const kakumTimers = new Map();
 
@@ -98,7 +94,7 @@ function makeKakumEmbed(status, detail) {
     .setDescription(
       `상태: **${status}**\n\n${detail}\n\n` +
       `첫 유혹 맞고 나서 **시작/리셋** 누르기\n` +
-      `현재 테스트라서 5초 뒤 효과음 울림`
+      `현재 테스트라서 5초 뒤 알림`
     )
     .setColor(0x9b59b6);
 }
@@ -132,62 +128,75 @@ function clearKakumTimer(guildId) {
   kakumTimers.delete(guildId);
 }
 
-async function playAlarm(connection) {
+function makeBeepStream() {
+  const sampleRate = 48000;
+  const channels = 2;
+  const volume = 0.35;
+
+  const parts = [
+    { type: 'beep', ms: 180, freq: 1200 },
+    { type: 'silence', ms: 120 },
+    { type: 'beep', ms: 180, freq: 1200 },
+    { type: 'silence', ms: 120 },
+    { type: 'beep', ms: 250, freq: 1500 }
+  ];
+
+  const buffers = [];
+
+  for (const part of parts) {
+    const samples = Math.floor(sampleRate * part.ms / 1000);
+    const buffer = Buffer.alloc(samples * channels * 2);
+
+    for (let i = 0; i < samples; i++) {
+      let value = 0;
+
+      if (part.type === 'beep') {
+        value = Math.sin(2 * Math.PI * part.freq * i / sampleRate) * 32767 * volume;
+      }
+
+      const intValue = Math.max(-32768, Math.min(32767, Math.floor(value)));
+
+      for (let ch = 0; ch < channels; ch++) {
+        buffer.writeInt16LE(intValue, (i * channels + ch) * 2);
+      }
+    }
+
+    buffers.push(buffer);
+  }
+
+  return Readable.from(Buffer.concat(buffers));
+}
+
+function playAlarm(connection) {
   console.log('카쿰 알람 재생 시도!');
 
-  const alarmPath = path.join(__dirname, 'sounds', 'alarm.mp3');
+  const player = createAudioPlayer({
+    behaviors: {
+      noSubscriber: NoSubscriberBehavior.Play
+    }
+  });
 
-  if (!fs.existsSync(alarmPath)) {
-    console.log('alarm.mp3 파일이 없습니다:', alarmPath);
-    return;
-  }
+  const resource = createAudioResource(makeBeepStream(), {
+    inputType: StreamType.Raw,
+    inlineVolume: true
+  });
 
-  try {
-    const ffmpeg = spawn(ffmpegPath, [
-      '-i', alarmPath,
-      '-analyzeduration', '0',
-      '-loglevel', '0',
-      '-f', 's16le',
-      '-ar', '48000',
-      '-ac', '2',
-      'pipe:1'
-    ]);
+  resource.volume?.setVolume(2.0);
 
-    const player = createAudioPlayer({
-      behaviors: {
-        noSubscriber: NoSubscriberBehavior.Play
-      }
-    });
+  connection.subscribe(player);
+  player.play(resource);
 
-    const resource = createAudioResource(ffmpeg.stdout, {
-      inputType: StreamType.Raw,
-      inlineVolume: true
-    });
+  player.on(AudioPlayerStatus.Playing, () => {
+    console.log('삐삐삐 재생중!');
+  });
 
-    resource.volume?.setVolume(2);
+  player.on(AudioPlayerStatus.Idle, () => {
+    console.log('삐삐삐 재생 끝!');
+  });
 
-    connection.subscribe(player);
-    player.play(resource);
-
-    player.on(AudioPlayerStatus.Playing, () => {
-      console.log('효과음 재생중!');
-    });
-
-    player.on(AudioPlayerStatus.Idle, () => {
-      console.log('효과음 재생 끝!');
-    });
-
-    player.on('error', error => {
-      console.error('효과음 재생 오류:', error);
-    });
-
-    ffmpeg.on('error', error => {
-      console.error('ffmpeg 실행 오류:', error);
-    });
-
-  } catch (error) {
-    console.error('음성 재생 실패:', error);
-  }
+  player.on('error', error => {
+    console.error('삐삐삐 재생 오류:', error);
+  });
 }
 
 const commands = [
@@ -295,7 +304,7 @@ client.on('interactionCreate', async interaction => {
         });
 
         const alertTimeout = setTimeout(async () => {
-          await playAlarm(connection);
+          playAlarm(connection);
 
           try {
             await interaction.message.edit({
@@ -321,7 +330,7 @@ client.on('interactionCreate', async interaction => {
           embeds: [
             makeKakumEmbed(
               '작동중',
-              '타이머 시작됨. 테스트라서 **5초 뒤** 효과음이 울려.'
+              '타이머 시작됨. 테스트라서 **5초 뒤** 삐삐삐 소리가 울려.'
             )
           ],
           components: [makeKakumButtons()]
