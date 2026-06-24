@@ -27,7 +27,7 @@ const SERVER_IDS = ['1506990201204117565'];
 const DATA_FILE = './voiceData.json';
 
 const KAKUM_TIMER_MS = 90 * 1000;
-const KAKUM_ALERT_MS = 5 * 1000;
+const KAKUM_ALERT_MS = 80 * 1000;
 
 const kakumTimers = new Map();
 
@@ -130,6 +130,7 @@ function clearKakumTimer(guildId) {
 }
 
 function playAlarm(connection) {
+console.log('카쿰 알람 재생 시도!');
   const alarmPath = path.join(__dirname, 'sounds', 'alarm.mp3');
 
   if (!fs.existsSync(alarmPath)) {
