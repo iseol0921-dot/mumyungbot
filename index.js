@@ -149,12 +149,25 @@ client.on('interactionCreate', async interaction => {
   try {
     await interaction.deferReply();
 
+    const guild = interaction.guild;
+
+    if (!guild) {
+      await interaction.editReply('서버 안에서만 사용할 수 있는 명령어야.');
+      return;
+    }
+
     const data = loadData();
-    const guildId = interaction.guildId;
+    const guildId = guild.id;
 
     if (interaction.commandName === '참여시간') {
       const target = interaction.options.getUser('유저') || interaction.user;
-      const member = await interaction.guild.members.fetch(target.id).catch(() => null);
+
+      let member = null;
+      try {
+        member = await guild.members.fetch(target.id);
+      } catch {
+        member = null;
+      }
 
       const userData = getUserData(data, guildId, target.id);
       if (member) userData.name = member.displayName;
@@ -196,11 +209,16 @@ client.on('interactionCreate', async interaction => {
       const days = 7;
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
-      const fetchedMembers = await interaction.guild.members.fetch().catch(() => null);
+      let membersCollection = null;
 
-      const members = fetchedMembers
-        ? Array.from(fetchedMembers.values()).filter(m => !m.user.bot)
-        : Array.from(interaction.guild.members.cache.values()).filter(m => !m.user.bot);
+      try {
+        membersCollection = await guild.members.fetch();
+      } catch {
+        membersCollection = guild.members.cache;
+      }
+
+      const members = Array.from(membersCollection.values())
+        .filter(m => !m.user.bot);
 
       const guildData = data.guilds[guildId]?.users || {};
 
@@ -236,8 +254,6 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply('오류가 발생했어. Railway 로그를 확인해줘.').catch(() => {});
-    } else {
-      await interaction.reply('오류가 발생했어. Railway 로그를 확인해줘.').catch(() => {});
     }
   }
 });
