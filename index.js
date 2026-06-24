@@ -15,18 +15,25 @@ import {
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
+  VoiceConnectionStatus,
+  entersState,
   NoSubscriberBehavior,
   StreamType
 } from '@discordjs/voice';
 
 import fs from 'fs';
-import { Readable } from 'stream';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
+import ffmpegPath from 'ffmpeg-static';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const SERVER_IDS = ['1506990201204117565'];
 const DATA_FILE = './voiceData.json';
 
-// 테스트용: 5초 뒤 알림
-// 성공하면 80 * 1000 으로 바꾸면 됨
+// 테스트용 5초. 성공하면 80 * 1000 으로 변경
 const KAKUM_ALERT_MS = 5 * 1000;
 
 const kakumTimers = new Map();
@@ -93,8 +100,7 @@ function makeKakumEmbed(status, detail) {
     .setTitle('📢 카쿰 단체유혹 타이머')
     .setDescription(
       `상태: **${status}**\n\n${detail}\n\n` +
-      `첫 유혹 맞고 나서 **시작/리셋** 누르기\n` +
-      `현재 테스트라서 5초 뒤 알림`
+      `첫 유혹 맞고 나서 **시작/리셋** 누르기`
     )
     .setColor(0x9b59b6);
 }
@@ -128,75 +134,65 @@ function clearKakumTimer(guildId) {
   kakumTimers.delete(guildId);
 }
 
-function makeBeepStream() {
-  const sampleRate = 48000;
-  const channels = 2;
-  const volume = 0.35;
-
-  const parts = [
-    { type: 'beep', ms: 180, freq: 1200 },
-    { type: 'silence', ms: 120 },
-    { type: 'beep', ms: 180, freq: 1200 },
-    { type: 'silence', ms: 120 },
-    { type: 'beep', ms: 250, freq: 1500 }
-  ];
-
-  const buffers = [];
-
-  for (const part of parts) {
-    const samples = Math.floor(sampleRate * part.ms / 1000);
-    const buffer = Buffer.alloc(samples * channels * 2);
-
-    for (let i = 0; i < samples; i++) {
-      let value = 0;
-
-      if (part.type === 'beep') {
-        value = Math.sin(2 * Math.PI * part.freq * i / sampleRate) * 32767 * volume;
-      }
-
-      const intValue = Math.max(-32768, Math.min(32767, Math.floor(value)));
-
-      for (let ch = 0; ch < channels; ch++) {
-        buffer.writeInt16LE(intValue, (i * channels + ch) * 2);
-      }
-    }
-
-    buffers.push(buffer);
-  }
-
-  return Readable.from(Buffer.concat(buffers));
-}
-
-function playAlarm(connection) {
+async function playAlarm(connection) {
   console.log('카쿰 알람 재생 시도!');
 
-  const player = createAudioPlayer({
-    behaviors: {
-      noSubscriber: NoSubscriberBehavior.Play
-    }
-  });
+  const alarmPath = path.join(__dirname, 'sounds', 'alarm.mp3');
 
-  const resource = createAudioResource(makeBeepStream(), {
-    inputType: StreamType.Raw,
-    inlineVolume: true
-  });
+  if (!fs.existsSync(alarmPath)) {
+    console.log('alarm.mp3 파일 없음:', alarmPath);
+    return;
+  }
 
-  resource.volume?.setVolume(2.0);
+  try {
+    await entersState(connection, VoiceConnectionStatus.Ready, 30000);
+    console.log('디스코드 음성 연결 READY');
 
-  connection.subscribe(player);
-  player.play(resource);
+    const ffmpeg = spawn(ffmpegPath, [
+      '-i', alarmPath,
+      '-analyzeduration', '0',
+      '-loglevel', '0',
+      '-f', 's16le',
+      '-ar', '48000',
+      '-ac', '2',
+      'pipe:1'
+    ]);
 
-  player.on(AudioPlayerStatus.Playing, () => {
-    console.log('삐삐삐 재생중!');
-  });
+    const player = createAudioPlayer({
+      behaviors: {
+        noSubscriber: NoSubscriberBehavior.Play
+      }
+    });
 
-  player.on(AudioPlayerStatus.Idle, () => {
-    console.log('삐삐삐 재생 끝!');
-  });
+    const resource = createAudioResource(ffmpeg.stdout, {
+      inputType: StreamType.Raw,
+      inlineVolume: true
+    });
 
-  player.on('error', error => {
-    console.error('삐삐삐 재생 오류:', error);
-  });
+    resource.volume?.setVolume(5);
+
+    connection.subscribe(player);
+    player.play(resource);
+
+    player.on(AudioPlayerStatus.Playing, () => {
+      console.log('효과음 재생중!');
+    });
+
+    player.on(AudioPlayerStatus.Idle, () => {
+      console.log('효과음 재생 끝!');
+    });
+
+    player.on('error', error => {
+      console.error('효과음 재생 오류:', error);
+    });
+
+    ffmpeg.on('error', error => {
+      console.error('ffmpeg 오류:', error);
+    });
+
+  } catch (error) {
+    console.error('음성 연결 READY 실패. Railway에서 Discord 음성 UDP가 막혔을 가능성 큼:', error);
+  }
 }
 
 const commands = [
@@ -287,7 +283,7 @@ client.on('interactionCreate', async interaction => {
 
         if (!voiceChannel) {
           await interaction.reply({
-            content: '먼저 음성채널에 들어가 있어야 봇이 그 방으로 들어갈 수 있어!',
+            content: '먼저 음성채널에 들어가 있어야 해!',
             ephemeral: true
           });
           return;
@@ -303,8 +299,12 @@ client.on('interactionCreate', async interaction => {
           selfMute: false
         });
 
+        connection.on(VoiceConnectionStatus.Ready, () => {
+          console.log('봇 음성채널 READY 됨');
+        });
+
         const alertTimeout = setTimeout(async () => {
-          playAlarm(connection);
+          await playAlarm(connection);
 
           try {
             await interaction.message.edit({
@@ -330,7 +330,7 @@ client.on('interactionCreate', async interaction => {
           embeds: [
             makeKakumEmbed(
               '작동중',
-              '타이머 시작됨. 테스트라서 **5초 뒤** 삐삐삐 소리가 울려.'
+              '타이머 시작됨. 테스트라서 **5초 뒤** 효과음이 울려.'
             )
           ],
           components: [makeKakumButtons()]
@@ -346,7 +346,7 @@ client.on('interactionCreate', async interaction => {
           embeds: [
             makeKakumEmbed(
               '대기중',
-              '타이머 정지됨. 다시 시작하려면 시작/리셋 눌러줘.'
+              '타이머 정지됨.'
             )
           ],
           components: [makeKakumButtons()]
@@ -379,7 +379,6 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === '참여시간') {
       const target = interaction.options.getUser('유저') || interaction.user;
       const userData = getUserData(data, guildId, target.id);
-
       const total = getCurrentTotal(userData);
 
       await interaction.editReply(
@@ -415,12 +414,7 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === '미접속일자') {
       const days = 7;
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-
-      let guild = interaction.guild;
-
-      if (!guild) {
-        guild = client.guilds.cache.get(guildId);
-      }
+      let guild = interaction.guild || client.guilds.cache.get(guildId);
 
       if (!guild) {
         try {
@@ -431,9 +425,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       if (!guild) {
-        await interaction.editReply(
-          '서버 정보를 못 불러왔어. 그래도 봇은 켜져 있어. 잠깐 뒤에 다시 해봐.'
-        );
+        await interaction.editReply('서버 정보를 못 불러왔어.');
         return;
       }
 
@@ -461,17 +453,14 @@ client.on('interactionCreate', async interaction => {
       });
 
       const text = inactive.length
-        ? inactive
-            .slice(0, 50)
-            .map(member => {
-              const userData = guildData[member.id];
-              const lastActive = userData
-                ? formatDate(userData.joinedAt || userData.lastLeaveAt || userData.lastJoinAt)
-                : '기록 없음';
+        ? inactive.slice(0, 50).map(member => {
+            const userData = guildData[member.id];
+            const lastActive = userData
+              ? formatDate(userData.joinedAt || userData.lastLeaveAt || userData.lastJoinAt)
+              : '기록 없음';
 
-              return `- ${member.displayName} / 마지막 음성: ${lastActive}`;
-            })
-            .join('\n')
+            return `- ${member.displayName} / 마지막 음성: ${lastActive}`;
+          }).join('\n')
         : `${days}일 이상 미접속자가 없습니다.`;
 
       await interaction.editReply(`📅 ${days}일 이상 음성 미접속자\n\n${text}`);
