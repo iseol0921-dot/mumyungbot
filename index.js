@@ -3,13 +3,33 @@ import {
   GatewayIntentBits,
   REST,
   Routes,
-  SlashCommandBuilder
+  SlashCommandBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder
 } from 'discord.js';
 
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource
+} from '@discordjs/voice';
+
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const SERVER_IDS = ['1506990201204117565'];
 const DATA_FILE = './voiceData.json';
+
+const KAKUM_TIMER_MS = 90 * 1000;
+const KAKUM_ALERT_MS = 80 * 1000;
+
+const kakumTimers = new Map();
 
 const client = new Client({
   intents: [
@@ -68,6 +88,66 @@ function getCurrentTotal(u) {
   return total;
 }
 
+function makeKakumEmbed(status, detail) {
+  return new EmbedBuilder()
+    .setTitle('📢 카쿰 단체유혹 타이머')
+    .setDescription(
+      `상태: **${status}**\n\n${detail}\n\n` +
+      `첫 유혹 맞고 나서 **시작/리셋** 누르면 돼.\n` +
+      `80초 뒤 효과음 = 다음 유혹 10초 전 알림`
+    )
+    .setColor(0x9b59b6);
+}
+
+function makeKakumButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('kakum_start')
+      .setLabel('시작/리셋')
+      .setEmoji('▶️')
+      .setStyle(ButtonStyle.Success),
+
+    new ButtonBuilder()
+      .setCustomId('kakum_stop')
+      .setLabel('종료')
+      .setEmoji('⏹️')
+      .setStyle(ButtonStyle.Danger)
+  );
+}
+
+function clearKakumTimer(guildId) {
+  const old = kakumTimers.get(guildId);
+
+  if (!old) return;
+
+  if (old.alertTimeout) clearTimeout(old.alertTimeout);
+
+  try {
+    if (old.connection) old.connection.destroy();
+  } catch {}
+
+  kakumTimers.delete(guildId);
+}
+
+function playAlarm(connection) {
+  const alarmPath = path.join(__dirname, 'sounds', 'alarm.mp3');
+
+  if (!fs.existsSync(alarmPath)) {
+    console.log('alarm.mp3 파일이 없습니다:', alarmPath);
+    return;
+  }
+
+  const player = createAudioPlayer();
+  const resource = createAudioResource(alarmPath);
+
+  connection.subscribe(player);
+  player.play(resource);
+
+  player.on('error', error => {
+    console.error('효과음 재생 오류:', error);
+  });
+}
+
 const commands = [
   new SlashCommandBuilder()
     .setName('참여시간')
@@ -89,7 +169,11 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('미접속일자')
-    .setDescription('7일 이상 음성채널 미접속자를 확인합니다')
+    .setDescription('7일 이상 음성채널 미접속자를 확인합니다'),
+
+  new SlashCommandBuilder()
+    .setName('카쿰타이머')
+    .setDescription('카쿰 단체유혹 타이머 버튼을 생성합니다')
 ].map(c => c.toJSON());
 
 client.once('ready', async () => {
@@ -143,13 +227,101 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 });
 
 client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
   try {
+    if (interaction.isButton()) {
+      const guildId = interaction.guildId;
+
+      if (interaction.customId === 'kakum_start') {
+        const voiceChannel = interaction.member.voice.channel;
+
+        if (!voiceChannel) {
+          await interaction.reply({
+            content: '먼저 음성채널에 들어가 있어야 봇이 그 방으로 들어갈 수 있어!',
+            ephemeral: true
+          });
+          return;
+        }
+
+        clearKakumTimer(guildId);
+
+        const connection = joinVoiceChannel({
+          channelId: voiceChannel.id,
+          guildId: interaction.guild.id,
+          adapterCreator: interaction.guild.voiceAdapterCreator
+        });
+
+        const alertTimeout = setTimeout(async () => {
+          playAlarm(connection);
+
+          try {
+            await interaction.message.edit({
+              embeds: [
+                makeKakumEmbed(
+                  '🔔 알림 울림',
+                  '단체유혹 **10초 전**이야! 유혹 맞고 나면 다시 시작/리셋 눌러줘.'
+                )
+              ],
+              components: [makeKakumButtons()]
+            });
+          } catch (e) {
+            console.error('카쿰 메시지 수정 오류:', e);
+          }
+        }, KAKUM_ALERT_MS);
+
+        kakumTimers.set(guildId, {
+          alertTimeout,
+          connection
+        });
+
+        await interaction.update({
+          embeds: [
+            makeKakumEmbed(
+              '작동중',
+              '90초 타이머 시작됨. **80초 뒤** 효과음이 울려.'
+            )
+          ],
+          components: [makeKakumButtons()]
+        });
+
+        return;
+      }
+
+      if (interaction.customId === 'kakum_stop') {
+        clearKakumTimer(guildId);
+
+        await interaction.update({
+          embeds: [
+            makeKakumEmbed(
+              '대기중',
+              '타이머 정지됨. 다시 시작하려면 시작/리셋 눌러줘.'
+            )
+          ],
+          components: [makeKakumButtons()]
+        });
+
+        return;
+      }
+    }
+
+    if (!interaction.isChatInputCommand()) return;
+
     await interaction.deferReply();
 
     const guildId = interaction.guildId || SERVER_IDS[0];
     const data = loadData();
+
+    if (interaction.commandName === '카쿰타이머') {
+      await interaction.editReply({
+        embeds: [
+          makeKakumEmbed(
+            '대기중',
+            '첫 유혹 맞고 나서 시작/리셋 버튼을 눌러줘.'
+          )
+        ],
+        components: [makeKakumButtons()]
+      });
+      return;
+    }
 
     if (interaction.commandName === '참여시간') {
       const target = interaction.options.getUser('유저') || interaction.user;
