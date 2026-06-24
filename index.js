@@ -149,12 +149,16 @@ client.on('interactionCreate', async interaction => {
   try {
     await interaction.deferReply();
 
-    const guild = interaction.guild;
+   let guild = interaction.guild;
 
-    if (!guild) {
-      await interaction.editReply('서버 안에서만 사용할 수 있는 명령어야.');
-      return;
-    }
+if (!guild && interaction.guildId) {
+  guild = await client.guilds.fetch(interaction.guildId).catch(() => null);
+}
+
+if (!guild) {
+  await interaction.editReply('서버 정보를 불러오지 못했어. 봇을 다시 초대하거나 권한을 확인해줘.');
+  return;
+}
 
     const data = loadData();
     const guildId = guild.id;
