@@ -13,7 +13,11 @@ import {
 import {
   joinVoiceChannel,
   createAudioPlayer,
-  createAudioResource
+  createAudioResource,
+  AudioPlayerStatus,
+  VoiceConnectionStatus,
+  entersState,
+  NoSubscriberBehavior
 } from '@discordjs/voice';
 
 import fs from 'fs';
