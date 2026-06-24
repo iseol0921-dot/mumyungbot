@@ -47,27 +47,25 @@ function getUserData(data, guildId, userId) {
 }
 
 function formatTime(ms) {
-  const totalMinutes = Math.floor(ms / 60000);
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
+  const min = Math.floor(ms / 60000);
+  const d = Math.floor(min / 1440);
+  const h = Math.floor((min % 1440) / 60);
+  const m = min % 60;
 
-  if (days > 0) return `${days}일 ${hours}시간 ${minutes}분`;
-  if (hours > 0) return `${hours}시간 ${minutes}분`;
-  return `${minutes}분`;
+  if (d > 0) return `${d}일 ${h}시간 ${m}분`;
+  if (h > 0) return `${h}시간 ${m}분`;
+  return `${m}분`;
 }
 
-function getCurrentTotal(userData) {
-  let total = userData.totalMs || 0;
-  if (userData.joinedAt) total += Date.now() - userData.joinedAt;
+function formatDate(t) {
+  if (!t) return '기록 없음';
+  return new Date(t).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+}
+
+function getCurrentTotal(u) {
+  let total = u.totalMs || 0;
+  if (u.joinedAt) total += Date.now() - u.joinedAt;
   return total;
-}
-
-function formatDate(timestamp) {
-  if (!timestamp) return '기록 없음';
-  return new Date(timestamp).toLocaleString('ko-KR', {
-    timeZone: 'Asia/Seoul'
-  });
 }
 
 const commands = [
@@ -136,6 +134,7 @@ client.on('voiceStateUpdate', (oldState, newState) => {
     if (userData.joinedAt) {
       userData.totalMs += Date.now() - userData.joinedAt;
     }
+
     userData.joinedAt = null;
     userData.lastLeaveAt = Date.now();
   }
@@ -149,32 +148,12 @@ client.on('interactionCreate', async interaction => {
   try {
     await interaction.deferReply();
 
-   let guild = interaction.guild;
-
-if (!guild && interaction.guildId) {
-  guild = await client.guilds.fetch(interaction.guildId).catch(() => null);
-}
-
-if (!guild) {
-  await interaction.editReply('서버 정보를 불러오지 못했어. 봇을 다시 초대하거나 권한을 확인해줘.');
-  return;
-}
-
+    const guildId = interaction.guildId || SERVER_IDS[0];
     const data = loadData();
-    const guildId = guild.id;
 
     if (interaction.commandName === '참여시간') {
       const target = interaction.options.getUser('유저') || interaction.user;
-
-      let member = null;
-      try {
-        member = await guild.members.fetch(target.id);
-      } catch {
-        member = null;
-      }
-
       const userData = getUserData(data, guildId, target.id);
-      if (member) userData.name = member.displayName;
 
       const total = getCurrentTotal(userData);
 
@@ -193,7 +172,6 @@ if (!guild) {
 
       const ranking = Object.entries(guildData)
         .map(([userId, userData]) => ({
-          userId,
           name: userData.name || userId,
           totalMs: getCurrentTotal(userData)
         }))
@@ -213,7 +191,28 @@ if (!guild) {
       const days = 7;
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
-      let membersCollection = null;
+      let guild = interaction.guild;
+
+      if (!guild) {
+        guild = client.guilds.cache.get(guildId);
+      }
+
+      if (!guild) {
+        try {
+          guild = await client.guilds.fetch(guildId);
+        } catch {
+          guild = null;
+        }
+      }
+
+      if (!guild) {
+        await interaction.editReply(
+          '서버 정보를 못 불러왔어. 그래도 봇은 켜져 있어. 잠깐 뒤에 다시 해봐.'
+        );
+        return;
+      }
+
+      let membersCollection;
 
       try {
         membersCollection = await guild.members.fetch();
@@ -256,9 +255,13 @@ if (!guild) {
   } catch (error) {
     console.error(error);
 
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply('오류가 발생했어. Railway 로그를 확인해줘.').catch(() => {});
-    }
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply('오류가 발생했어. Railway 로그 확인 필요!');
+      } else {
+        await interaction.reply('오류가 발생했어. Railway 로그 확인 필요!');
+      }
+    } catch {}
   }
 });
 
