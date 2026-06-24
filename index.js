@@ -9,7 +9,7 @@ import {
   ButtonStyle,
   EmbedBuilder
 } from 'discord.js';
-
+import 'dotenv/config';
 import {
   joinVoiceChannel,
   createAudioPlayer,
