@@ -30,8 +30,7 @@ const __dirname = path.dirname(__filename);
 const SERVER_IDS = ['1506990201204117565'];
 const DATA_FILE = './voiceData.json';
 
-const KAKUM_TIMER_MS = 90 * 1000;
-const KAKUM_ALERT_MS = 5 * 1000;
+const KAKUM_ALERT_MS = 5 * 1000; // 테스트용 5초. 성공하면 80 * 1000 으로 바꾸기
 
 const kakumTimers = new Map();
 
@@ -97,8 +96,8 @@ function makeKakumEmbed(status, detail) {
     .setTitle('📢 카쿰 단체유혹 타이머')
     .setDescription(
       `상태: **${status}**\n\n${detail}\n\n` +
-      `첫 유혹 맞고 나서 **시작/리셋** 누르면 돼.\n` +
-      `80초 뒤 효과음 = 다음 유혹 10초 전 알림`
+      `첫 유혹 맞고 나서 **시작/리셋** 누르기\n` +
+      `효과음 테스트는 현재 5초 뒤 울림`
     )
     .setColor(0x9b59b6);
 }
@@ -110,7 +109,6 @@ function makeKakumButtons() {
       .setLabel('시작/리셋')
       .setEmoji('▶️')
       .setStyle(ButtonStyle.Success),
-
     new ButtonBuilder()
       .setCustomId('kakum_stop')
       .setLabel('종료')
@@ -121,7 +119,6 @@ function makeKakumButtons() {
 
 function clearKakumTimer(guildId) {
   const old = kakumTimers.get(guildId);
-
   if (!old) return;
 
   if (old.alertTimeout) clearTimeout(old.alertTimeout);
@@ -145,7 +142,6 @@ async function playAlarm(connection) {
 
   try {
     await entersState(connection, VoiceConnectionStatus.Ready, 10000);
-
     console.log('음성 연결 준비 완료');
 
     const player = createAudioPlayer({
@@ -154,7 +150,11 @@ async function playAlarm(connection) {
       }
     });
 
-    const resource = createAudioResource(alarmPath);
+    const resource = createAudioResource(alarmPath, {
+      inlineVolume: true
+    });
+
+    resource.volume?.setVolume(1.5);
 
     connection.subscribe(player);
     player.play(resource);
@@ -170,11 +170,10 @@ async function playAlarm(connection) {
     player.on('error', error => {
       console.error('효과음 재생 오류:', error);
     });
-
   } catch (error) {
-    console.error('음성 연결 실패:', error);
+    console.error('음성 연결/재생 실패:', error);
   }
-
+}
 
 const commands = [
   new SlashCommandBuilder()
@@ -275,18 +274,19 @@ client.on('interactionCreate', async interaction => {
         const connection = joinVoiceChannel({
           channelId: voiceChannel.id,
           guildId: interaction.guild.id,
-          adapterCreator: interaction.guild.voiceAdapterCreator
+          adapterCreator: interaction.guild.voiceAdapterCreator,
+          selfDeaf: false
         });
 
         const alertTimeout = setTimeout(async () => {
-          playAlarm(connection);
+          await playAlarm(connection);
 
           try {
             await interaction.message.edit({
               embeds: [
                 makeKakumEmbed(
                   '🔔 알림 울림',
-                  '단체유혹 **10초 전**이야! 유혹 맞고 나면 다시 시작/리셋 눌러줘.'
+                  '단체유혹 10초 전 알림이야! 유혹 맞고 나면 다시 시작/리셋 눌러줘.'
                 )
               ],
               components: [makeKakumButtons()]
@@ -305,7 +305,7 @@ client.on('interactionCreate', async interaction => {
           embeds: [
             makeKakumEmbed(
               '작동중',
-              '90초 타이머 시작됨. **80초 뒤** 효과음이 울려.'
+              '타이머 시작됨. 테스트라서 **5초 뒤** 효과음이 울려.'
             )
           ],
           components: [makeKakumButtons()]
