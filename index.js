@@ -31,8 +31,8 @@ const __dirname = path.dirname(__filename);
 const SERVER_IDS = ['1506990201204117565'];
 const DATA_FILE = './voiceData.json';
 
-const KAKUM_ALERT_MS = 5 * 1000; // 테스트용. 성공하면 80 * 1000 으로 바꾸기
-
+const KAKUM_ALERT_MS = 5 * 1000;
+console.log(ffmpegPath);
 const kakumTimers = new Map();
 
 const client = new Client({
