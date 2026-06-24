@@ -8,10 +8,7 @@ import {
 
 import fs from 'fs';
 
-const SERVER_IDS = [
-  '1506990201204117565'
-];
-
+const SERVER_IDS = ['1506990201204117565'];
 const DATA_FILE = './voiceData.json';
 
 const client = new Client({
@@ -23,10 +20,7 @@ const client = new Client({
 });
 
 function loadData() {
-  if (!fs.existsSync(DATA_FILE)) {
-    return { guilds: {} };
-  }
-
+  if (!fs.existsSync(DATA_FILE)) return { guilds: {} };
   try {
     return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
   } catch {
@@ -40,7 +34,6 @@ function saveData(data) {
 
 function getUserData(data, guildId, userId) {
   if (!data.guilds[guildId]) data.guilds[guildId] = { users: {} };
-
   if (!data.guilds[guildId].users[userId]) {
     data.guilds[guildId].users[userId] = {
       totalMs: 0,
@@ -50,7 +43,6 @@ function getUserData(data, guildId, userId) {
       name: ''
     };
   }
-
   return data.guilds[guildId].users[userId];
 }
 
@@ -67,17 +59,12 @@ function formatTime(ms) {
 
 function getCurrentTotal(userData) {
   let total = userData.totalMs || 0;
-
-  if (userData.joinedAt) {
-    total += Date.now() - userData.joinedAt;
-  }
-
+  if (userData.joinedAt) total += Date.now() - userData.joinedAt;
   return total;
 }
 
 function formatDate(timestamp) {
   if (!timestamp) return '기록 없음';
-
   return new Date(timestamp).toLocaleString('ko-KR', {
     timeZone: 'Asia/Seoul'
   });
@@ -102,9 +89,9 @@ const commands = [
         .setRequired(false)
     ),
 
- new SlashCommandBuilder()
-  .setName('미접속일자')
-  .setDescription('7일 이상 음성채널 미접속자를 확인합니다')
+  new SlashCommandBuilder()
+    .setName('미접속일자')
+    .setDescription('7일 이상 음성채널 미접속자를 확인합니다')
 ].map(c => c.toJSON());
 
 client.once('ready', async () => {
@@ -117,9 +104,10 @@ client.once('ready', async () => {
       Routes.applicationGuildCommands(client.user.id, guildId),
       { body: commands }
     );
+    console.log(`${guildId} 명령어 등록 완료!`);
   }
 
-  console.log('명령어 등록 완료!');
+  console.log('전체 명령어 등록 완료!');
 });
 
 client.on('voiceStateUpdate', (oldState, newState) => {
@@ -148,7 +136,6 @@ client.on('voiceStateUpdate', (oldState, newState) => {
     if (userData.joinedAt) {
       userData.totalMs += Date.now() - userData.joinedAt;
     }
-
     userData.joinedAt = null;
     userData.lastLeaveAt = Date.now();
   }
@@ -159,96 +146,99 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  await interaction.deferReply();
+  try {
+    await interaction.deferReply();
 
-  const data = loadData();
-  const guildId = interaction.guildId;
+    const data = loadData();
+    const guildId = interaction.guildId;
 
-  if (interaction.commandName === '참여시간') {
-    const target = interaction.options.getUser('유저') || interaction.user;
-    const member = await interaction.guild.members.fetch(target.id).catch(() => null);
+    if (interaction.commandName === '참여시간') {
+      const target = interaction.options.getUser('유저') || interaction.user;
+      const member = await interaction.guild.members.fetch(target.id).catch(() => null);
 
-    const userData = getUserData(data, guildId, target.id);
-    if (member) userData.name = member.displayName;
+      const userData = getUserData(data, guildId, target.id);
+      if (member) userData.name = member.displayName;
 
-    const total = getCurrentTotal(userData);
+      const total = getCurrentTotal(userData);
 
- await interaction.editReply(
-      `📊 ${userData.name || target.username}님의 음성 참여시간\n\n` +
-      `총 참여시간: **${formatTime(total)}**\n` +
-      `마지막 입장: ${formatDate(userData.lastJoinAt)}\n` +
-      `마지막 퇴장: ${formatDate(userData.lastLeaveAt)}`
-    );
+      await interaction.editReply(
+        `📊 ${userData.name || target.username}님의 음성 참여시간\n\n` +
+        `총 참여시간: **${formatTime(total)}**\n` +
+        `마지막 입장: ${formatDate(userData.lastJoinAt)}\n` +
+        `마지막 퇴장: ${formatDate(userData.lastLeaveAt)}`
+      );
+      return;
+    }
 
-    return;
-  }
+    if (interaction.commandName === '참여랭킹') {
+      const limit = interaction.options.getInteger('인원') || 10;
+      const guildData = data.guilds[guildId]?.users || {};
 
-  if (interaction.commandName === '참여랭킹') {
-    const limit = interaction.options.getInteger('인원') || 10;
-    const guildData = data.guilds[guildId]?.users || {};
+      const ranking = Object.entries(guildData)
+        .map(([userId, userData]) => ({
+          userId,
+          name: userData.name || userId,
+          totalMs: getCurrentTotal(userData)
+        }))
+        .filter(v => v.totalMs > 0)
+        .sort((a, b) => b.totalMs - a.totalMs)
+        .slice(0, limit);
 
-    const ranking = Object.entries(guildData)
-      .map(([userId, userData]) => ({
-        userId,
-        name: userData.name || userId,
-        totalMs: getCurrentTotal(userData)
-      }))
-      .filter(v => v.totalMs > 0)
-      .sort((a, b) => b.totalMs - a.totalMs)
-      .slice(0, limit);
+      const text = ranking.length
+        ? ranking.map((v, i) => `${i + 1}. ${v.name} - ${formatTime(v.totalMs)}`).join('\n')
+        : '아직 기록이 없습니다.';
 
-    const text = ranking.length
-      ? ranking.map((v, i) => `${i + 1}. ${v.name} - ${formatTime(v.totalMs)}`).join('\n')
-      : '아직 기록이 없습니다.';
+      await interaction.editReply(`🏆 음성 참여시간 랭킹\n\n${text}`);
+      return;
+    }
 
-   await interaction.editReply(
-      `🏆 음성 참여시간 랭킹\n\n${text}`
-    );
+    if (interaction.commandName === '미접속일자') {
+      const days = 7;
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
-    return;
-  }
+      const fetchedMembers = await interaction.guild.members.fetch().catch(() => null);
 
-  if (interaction.commandName === '미접속일자') {
-    const days =7;
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+      const members = fetchedMembers
+        ? Array.from(fetchedMembers.values()).filter(m => !m.user.bot)
+        : Array.from(interaction.guild.members.cache.values()).filter(m => !m.user.bot);
 
-    await interaction.guild.members.fetch();
+      const guildData = data.guilds[guildId]?.users || {};
 
-    const guildData = data.guilds[guildId]?.users || {};
-    const members = interaction.guild.members.cache
-      .filter(m => !m.user.bot)
-      .map(m => m);
+      const inactive = members.filter(member => {
+        const userData = guildData[member.id];
+        if (!userData) return true;
 
-    const inactive = members.filter(member => {
-      const userData = guildData[member.id];
+        const lastActive = userData.joinedAt || userData.lastLeaveAt || userData.lastJoinAt;
+        if (!lastActive) return true;
 
-      if (!userData) return true;
+        return lastActive < cutoff;
+      });
 
-      const lastActive = userData.joinedAt || userData.lastLeaveAt || userData.lastJoinAt;
-      if (!lastActive) return true;
+      const text = inactive.length
+        ? inactive
+            .slice(0, 50)
+            .map(member => {
+              const userData = guildData[member.id];
+              const lastActive = userData
+                ? formatDate(userData.joinedAt || userData.lastLeaveAt || userData.lastJoinAt)
+                : '기록 없음';
 
-      return lastActive < cutoff;
-    });
+              return `- ${member.displayName} / 마지막 음성: ${lastActive}`;
+            })
+            .join('\n')
+        : `${days}일 이상 미접속자가 없습니다.`;
 
-    const text = inactive.length
-      ? inactive
-          .slice(0, 50)
-          .map(member => {
-            const userData = guildData[member.id];
-            const lastActive = userData
-              ? formatDate(userData.joinedAt || userData.lastLeaveAt || userData.lastJoinAt)
-              : '기록 없음';
+      await interaction.editReply(`📅 ${days}일 이상 음성 미접속자\n\n${text}`);
+      return;
+    }
+  } catch (error) {
+    console.error(error);
 
-            return `- ${member.displayName} / 마지막 음성: ${lastActive}`;
-          })
-          .join('\n')
-      : `${days}일 이상 미접속자가 없습니다.`;
-
-  await interaction.editReply(
-      `📅 ${days}일 이상 음성 미접속자\n\n${text}`
-    );
-
-    return;
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply('오류가 발생했어. Railway 로그를 확인해줘.').catch(() => {});
+    } else {
+      await interaction.reply('오류가 발생했어. Railway 로그를 확인해줘.').catch(() => {});
+    }
   }
 });
 
