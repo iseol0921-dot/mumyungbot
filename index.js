@@ -102,14 +102,9 @@ const commands = [
         .setRequired(false)
     ),
 
-  new SlashCommandBuilder()
-    .setName('미접속일자')
-    .setDescription('음성채널 미접속자를 확인합니다')
-    .addIntegerOption(o =>
-      o.setName('일수')
-        .setDescription('며칠 이상 미접속인지')
-        .setRequired(false)
-    )
+ new SlashCommandBuilder()
+  .setName('미접속일자')
+  .setDescription('7일 이상 음성채널 미접속자를 확인합니다')
 ].map(c => c.toJSON());
 
 client.once('ready', async () => {
@@ -212,7 +207,7 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (interaction.commandName === '미접속일자') {
-    const days = interaction.options.getInteger('일수') || 7;
+    const days =7;
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
     await interaction.guild.members.fetch();
