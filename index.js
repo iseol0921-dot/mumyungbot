@@ -159,6 +159,8 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
+  await interaction.deferReply();
+
   const data = loadData();
   const guildId = interaction.guildId;
 
@@ -171,7 +173,7 @@ client.on('interactionCreate', async interaction => {
 
     const total = getCurrentTotal(userData);
 
-    await interaction.reply(
+ await interaction.editReply(
       `📊 ${userData.name || target.username}님의 음성 참여시간\n\n` +
       `총 참여시간: **${formatTime(total)}**\n` +
       `마지막 입장: ${formatDate(userData.lastJoinAt)}\n` +
@@ -199,7 +201,7 @@ client.on('interactionCreate', async interaction => {
       ? ranking.map((v, i) => `${i + 1}. ${v.name} - ${formatTime(v.totalMs)}`).join('\n')
       : '아직 기록이 없습니다.';
 
-    await interaction.reply(
+   await interaction.editReply(
       `🏆 음성 참여시간 랭킹\n\n${text}`
     );
 
@@ -242,7 +244,7 @@ client.on('interactionCreate', async interaction => {
           .join('\n')
       : `${days}일 이상 미접속자가 없습니다.`;
 
-    await interaction.reply(
+  await interaction.editReply(
       `📅 ${days}일 이상 음성 미접속자\n\n${text}`
     );
 
