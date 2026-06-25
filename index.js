@@ -35,6 +35,22 @@ const KAKUM_ALERT_MS = 5 * 1000;
 console.log(ffmpegPath);
 const kakumTimers = new Map();
 
+const JOB_ROLES = {
+  warrior: '1511648603930890331', // 전사
+  mage: '1511648663380693173', // 법사
+  thief: '1511648542396125274', // 도적
+  archer: '1511648446862458970', // 궁수
+  pirate: '1511649928001228941' // 해적
+};
+
+const JOB_LABELS = {
+  warrior: '전사',
+  mage: '법사',
+  thief: '도적',
+  archer: '궁수',
+  pirate: '해적'
+};
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -116,6 +132,98 @@ function makeKakumButtons() {
       .setEmoji('⏹️')
       .setStyle(ButtonStyle.Danger)
   );
+}
+
+function makeJobEmbed() {
+  return new EmbedBuilder()
+    .setTitle('⚔️ 직업 선택')
+    .setDescription(
+      '본인의 직업을 선택해주세요.\n\n' +
+      '직업은 **1개만 선택 가능**합니다.\n' +
+      '다른 직업을 누르면 기존 직업 역할은 자동으로 제거됩니다.'
+    )
+    .setColor(0x9b59b6);
+}
+
+function makeJobButtons() {
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('job_warrior')
+      .setLabel('전사')
+      .setEmoji('⚔️')
+      .setStyle(ButtonStyle.Primary),
+
+    new ButtonBuilder()
+      .setCustomId('job_thief')
+      .setLabel('도적')
+      .setEmoji('🗡️')
+      .setStyle(ButtonStyle.Primary),
+
+    new ButtonBuilder()
+      .setCustomId('job_archer')
+      .setLabel('궁수')
+      .setEmoji('🏹')
+      .setStyle(ButtonStyle.Primary)
+  );
+
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('job_mage')
+      .setLabel('법사')
+      .setEmoji('✨')
+      .setStyle(ButtonStyle.Primary),
+
+    new ButtonBuilder()
+      .setCustomId('job_pirate')
+      .setLabel('해적')
+      .setEmoji('☠️')
+      .setStyle(ButtonStyle.Primary),
+
+    new ButtonBuilder()
+      .setCustomId('job_reset')
+      .setLabel('리셋')
+      .setEmoji('🔄')
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  return [row1, row2];
+}
+
+async function setJobRole(interaction, jobKey) {
+  const member = interaction.member;
+
+  const allRoleIds = Object.values(JOB_ROLES);
+  const removeRoles = allRoleIds.filter(roleId => member.roles.cache.has(roleId));
+
+  if (removeRoles.length > 0) {
+    await member.roles.remove(removeRoles);
+  }
+
+  if (jobKey === 'reset') {
+    await interaction.reply({
+      content: '🔄 직업 역할을 모두 제거했습니다.',
+      ephemeral: true
+    });
+    return;
+  }
+
+  const roleId = JOB_ROLES[jobKey];
+  const label = JOB_LABELS[jobKey];
+
+  if (!roleId) {
+    await interaction.reply({
+      content: '직업 역할 설정을 찾을 수 없습니다.',
+      ephemeral: true
+    });
+    return;
+  }
+
+  await member.roles.add(roleId);
+
+  await interaction.reply({
+    content: `✅ **${label}** 역할이 지급되었습니다.`,
+    ephemeral: true
+  });
 }
 
 function clearKakumTimer(guildId) {
@@ -209,7 +317,11 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('카쿰타이머')
-    .setDescription('카쿰 단체유혹 타이머 버튼을 생성합니다')
+    .setDescription('카쿰 단체유혹 타이머 버튼을 생성합니다'),
+
+  new SlashCommandBuilder()
+    .setName('직업패널')
+    .setDescription('직업 선택 버튼 패널을 생성합니다')
 ].map(c => c.toJSON());
 
 client.once('ready', async () => {
@@ -266,6 +378,12 @@ client.on('interactionCreate', async interaction => {
   try {
     if (interaction.isButton()) {
       const guildId = interaction.guildId;
+
+      if (interaction.customId.startsWith('job_')) {
+        const jobKey = interaction.customId.replace('job_', '');
+        await setJobRole(interaction, jobKey);
+        return;
+      }
 
       if (interaction.customId === 'kakum_start') {
         const voiceChannel = interaction.member.voice.channel;
@@ -340,6 +458,14 @@ client.on('interactionCreate', async interaction => {
 
     const guildId = interaction.guildId || SERVER_IDS[0];
     const data = loadData();
+
+    if (interaction.commandName === '직업패널') {
+      await interaction.editReply({
+        embeds: [makeJobEmbed()],
+        components: makeJobButtons()
+      });
+      return;
+    }
 
     if (interaction.commandName === '카쿰타이머') {
       await interaction.editReply({
