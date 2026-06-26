@@ -10,37 +10,18 @@ import {
   EmbedBuilder
 } from 'discord.js';
 import 'dotenv/config';
-import {
-  joinVoiceChannel,
-  createAudioPlayer,
-  createAudioResource,
-  AudioPlayerStatus,
-  NoSubscriberBehavior,
-  StreamType
-} from '@discordjs/voice';
 
 import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
-import ffmpegPath from 'ffmpeg-static';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const SERVER_IDS = ['1506990201204117565'];
 const DATA_FILE = './voiceData.json';
 
-const KAKUM_ALERT_MS = 5 * 1000;
-console.log(ffmpegPath);
-const kakumTimers = new Map();
-
 const JOB_ROLES = {
-  warrior: '1511648603930890331', // 전사
-  mage: '1511648663380693173', // 법사
-  thief: '1511648542396125274', // 도적
-  archer: '1511648446862458970', // 궁수
-  pirate: '1511649928001228941' // 해적
+  warrior: '1511648603930890331',
+  mage: '1511648663380693173',
+  thief: '1511648542396125274',
+  archer: '1511648446862458970',
+  pirate: '1511649928001228941'
 };
 
 const JOB_LABELS = {
@@ -106,32 +87,6 @@ function getCurrentTotal(u) {
   let total = u.totalMs || 0;
   if (u.joinedAt) total += Date.now() - u.joinedAt;
   return total;
-}
-
-function makeKakumEmbed(status, detail) {
-  return new EmbedBuilder()
-    .setTitle('📢 카쿰 단체유혹 타이머')
-    .setDescription(
-      `상태: **${status}**\n\n${detail}\n\n` +
-      `첫 유혹 맞고 나서 **시작/리셋** 누르기`
-    )
-    .setColor(0x9b59b6);
-}
-
-function makeKakumButtons() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('kakum_start')
-      .setLabel('시작/리셋')
-      .setEmoji('▶️')
-      .setStyle(ButtonStyle.Success),
-
-    new ButtonBuilder()
-      .setCustomId('kakum_stop')
-      .setLabel('종료')
-      .setEmoji('⏹️')
-      .setStyle(ButtonStyle.Danger)
-  );
 }
 
 function makeJobEmbed() {
@@ -226,72 +181,6 @@ async function setJobRole(interaction, jobKey) {
   });
 }
 
-function clearKakumTimer(guildId) {
-  const old = kakumTimers.get(guildId);
-  if (!old) return;
-
-  if (old.alertTimeout) clearTimeout(old.alertTimeout);
-
-  try {
-    old.connection?.destroy();
-  } catch {}
-
-  kakumTimers.delete(guildId);
-}
-
-function playAlarm(connection) {
-  console.log('카쿰 알람 재생 시도!');
-
-  const alarmPath = path.join(__dirname, 'sounds', 'alarm.mp3');
-
-  if (!fs.existsSync(alarmPath)) {
-    console.log('alarm.mp3 파일 없음:', alarmPath);
-    return;
-  }
-
-  const ffmpeg = spawn(ffmpegPath, [
-    '-i', alarmPath,
-    '-analyzeduration', '0',
-    '-loglevel', '0',
-    '-f', 's16le',
-    '-ar', '48000',
-    '-ac', '2',
-    'pipe:1'
-  ]);
-
-  const player = createAudioPlayer({
-    behaviors: {
-      noSubscriber: NoSubscriberBehavior.Play
-    }
-  });
-
-  const resource = createAudioResource(ffmpeg.stdout, {
-    inputType: StreamType.Raw,
-    inlineVolume: true
-  });
-
-  resource.volume?.setVolume(10);
-
-  connection.subscribe(player);
-  player.play(resource);
-
-  player.on(AudioPlayerStatus.Playing, () => {
-    console.log('효과음 재생중!');
-  });
-
-  player.on(AudioPlayerStatus.Idle, () => {
-    console.log('효과음 재생 끝!');
-  });
-
-  player.on('error', error => {
-    console.error('효과음 재생 오류:', error);
-  });
-
-  ffmpeg.on('error', error => {
-    console.error('ffmpeg 오류:', error);
-  });
-}
-
 const commands = [
   new SlashCommandBuilder()
     .setName('참여시간')
@@ -314,10 +203,6 @@ const commands = [
   new SlashCommandBuilder()
     .setName('미접속일자')
     .setDescription('7일 이상 음성채널 미접속자를 확인합니다'),
-
-  new SlashCommandBuilder()
-    .setName('카쿰타이머')
-    .setDescription('카쿰 단체유혹 타이머 버튼을 생성합니다'),
 
   new SlashCommandBuilder()
     .setName('직업패널')
@@ -366,7 +251,6 @@ client.on('voiceStateUpdate', (oldState, newState) => {
     if (userData.joinedAt) {
       userData.totalMs += Date.now() - userData.joinedAt;
     }
-
     userData.joinedAt = null;
     userData.lastLeaveAt = Date.now();
   }
@@ -377,77 +261,9 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 client.on('interactionCreate', async interaction => {
   try {
     if (interaction.isButton()) {
-      const guildId = interaction.guildId;
-
       if (interaction.customId.startsWith('job_')) {
         const jobKey = interaction.customId.replace('job_', '');
         await setJobRole(interaction, jobKey);
-        return;
-      }
-
-      if (interaction.customId === 'kakum_start') {
-        const voiceChannel = interaction.member.voice.channel;
-
-        if (!voiceChannel) {
-          await interaction.reply({
-            content: '먼저 음성채널에 들어가 있어야 해!',
-            ephemeral: true
-          });
-          return;
-        }
-
-        clearKakumTimer(guildId);
-
-        const connection = joinVoiceChannel({
-          channelId: voiceChannel.id,
-          guildId: interaction.guild.id,
-          adapterCreator: interaction.guild.voiceAdapterCreator,
-          selfDeaf: false,
-          selfMute: false
-        });
-
-        const alertTimeout = setTimeout(async () => {
-          playAlarm(connection);
-
-          await interaction.message.edit({
-            embeds: [
-              makeKakumEmbed(
-                '🔔 알림 울림',
-                '단체유혹 알림이야! 유혹 맞고 나면 다시 시작/리셋 눌러줘.'
-              )
-            ],
-            components: [makeKakumButtons()]
-          });
-        }, KAKUM_ALERT_MS);
-
-        kakumTimers.set(guildId, {
-          alertTimeout,
-          connection
-        });
-
-        await interaction.update({
-          embeds: [
-            makeKakumEmbed(
-              '작동중',
-              '타이머 시작됨. 테스트라서 **5초 뒤** 효과음이 울려.'
-            )
-          ],
-          components: [makeKakumButtons()]
-        });
-
-        return;
-      }
-
-      if (interaction.customId === 'kakum_stop') {
-        clearKakumTimer(guildId);
-
-        await interaction.update({
-          embeds: [
-            makeKakumEmbed('대기중', '타이머 정지됨.')
-          ],
-          components: [makeKakumButtons()]
-        });
-
         return;
       }
     }
@@ -463,19 +279,6 @@ client.on('interactionCreate', async interaction => {
       await interaction.editReply({
         embeds: [makeJobEmbed()],
         components: makeJobButtons()
-      });
-      return;
-    }
-
-    if (interaction.commandName === '카쿰타이머') {
-      await interaction.editReply({
-        embeds: [
-          makeKakumEmbed(
-            '대기중',
-            '첫 유혹 맞고 나서 시작/리셋 버튼을 눌러줘.'
-          )
-        ],
-        components: [makeKakumButtons()]
       });
       return;
     }
@@ -535,7 +338,6 @@ client.on('interactionCreate', async interaction => {
       }
 
       let membersCollection;
-
       try {
         membersCollection = await guild.members.fetch();
       } catch {
@@ -550,10 +352,8 @@ client.on('interactionCreate', async interaction => {
       const inactive = members.filter(member => {
         const userData = guildData[member.id];
         if (!userData) return true;
-
         const lastActive = userData.joinedAt || userData.lastLeaveAt || userData.lastJoinAt;
         if (!lastActive) return true;
-
         return lastActive < cutoff;
       });
 
@@ -563,7 +363,6 @@ client.on('interactionCreate', async interaction => {
             const lastActive = userData
               ? formatDate(userData.joinedAt || userData.lastLeaveAt || userData.lastJoinAt)
               : '기록 없음';
-
             return `- ${member.displayName} / 마지막 음성: ${lastActive}`;
           }).join('\n')
         : `${days}일 이상 미접속자가 없습니다.`;
@@ -573,7 +372,6 @@ client.on('interactionCreate', async interaction => {
     }
   } catch (error) {
     console.error(error);
-
     try {
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply('오류가 발생했어. Railway 로그 확인 필요!');
