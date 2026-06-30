@@ -21,7 +21,8 @@ const JOB_ROLES = {
   mage: '1511648663380693173',
   thief: '1511648542396125274',
   archer: '1511648446862458970',
-  pirate: '1511649928001228941'
+  pirate: '1511649928001228941',
+  mercenary: '1517436573988159612'
 };
 
 const JOB_LABELS = {
@@ -29,7 +30,8 @@ const JOB_LABELS = {
   mage: '법사',
   thief: '도적',
   archer: '궁수',
-  pirate: '해적'
+  pirate: '해적',
+  mercenary: '용병'
 };
 
 const client = new Client({
@@ -135,13 +137,21 @@ function makeJobButtons() {
       .setStyle(ButtonStyle.Primary),
 
     new ButtonBuilder()
+      .setCustomId('job_mercenary')
+      .setLabel('용병')
+      .setEmoji('🛡️')
+      .setStyle(ButtonStyle.Primary)
+  );
+
+  const row3 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
       .setCustomId('job_reset')
       .setLabel('리셋')
       .setEmoji('🔄')
       .setStyle(ButtonStyle.Danger)
   );
 
-  return [row1, row2];
+  return [row1, row2, row3];
 }
 
 async function setJobRole(interaction, jobKey) {
